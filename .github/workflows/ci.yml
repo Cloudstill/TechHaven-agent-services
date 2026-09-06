@@ -1,0 +1,32 @@
+name: Agent Services CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  services:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { path: techhaven-bff, name: "techhaven-bff build & test", check: build }
+          - { path: techhaven-mcp, name: "techhaven-mcp typecheck & smoke", check: smoke }
+          - { path: techhaven-agent-bridge, name: "techhaven-agent-bridge typecheck & smoke", check: smoke }
+          - { path: techhaven-gateway, name: "techhaven-gateway typecheck & smoke", check: smoke }
+    defaults:
+      run:
+        working-directory: services/${{ matrix.path }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: services/${{ matrix.path }}/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run ${{ matrix.check }}

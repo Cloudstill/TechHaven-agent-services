@@ -1,0 +1,23 @@
+{
+  "name": "techhaven-agent-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TechHaven Agent 与旧版 HTTP 后端之间的独立兼容层",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "smoke": "npm run build && tsx src/smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

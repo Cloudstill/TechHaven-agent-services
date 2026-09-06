@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.local
+*.log
+*.tgz
+.test-dist-*/
+services/**/data/
+services/**/audit/
+services/**/*.jsonl

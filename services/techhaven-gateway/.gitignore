@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+data-smoke/
+*.log
+
+# 单测编译产物：Windows 上 tsx --test 启动器偶发 uv_os_get_passwd ENOMEM，
+# 改为 tsc 编译后直接 node --test 执行 .test-dist/。仅本地使用，不入库。
+.test-dist/

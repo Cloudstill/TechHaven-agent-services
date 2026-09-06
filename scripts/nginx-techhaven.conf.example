@@ -1,0 +1,130 @@
+# TechHaven Nginx 站点配置示例（TLS 终结 + 身份桥）
+#
+# 用法：
+#   1. 复制为 /etc/nginx/sites-available/techhaven，替换 <...> 占位符
+#   2. ln -s /etc/nginx/sites-available/techhaven /etc/nginx/sites-enabled/
+#   3. nginx -t && systemctl reload nginx
+#
+# 前提：
+#   - 前端已发布到 /srv/techhaven-frontend/current
+#   - Agent Gateway 在 127.0.0.1:3091（shared/gateway.env）
+#   - BFF 身份桥在 127.0.0.1:3092（shared/bff.env，校验产品后端会话并注入 actor）
+#
+# 证书：
+#   优先用 certbot 签发 Let's Encrypt（certbot --nginx -d <域名>），
+#   它会在 443 server 里自动补上 ssl_certificate 路径。
+#   内网/试点可先生成自签证书：
+#     openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+#       -keyout /etc/nginx/certs/techhaven.key \
+#       -out /etc/nginx/certs/techhaven.crt \
+#       -subj "/CN=<你的域名>"
+
+# SSE 需要长连接，避免 504
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+
+# ---------- 80 端口：全量跳转到 HTTPS ----------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name <你的域名>;
+    return 301 https://$host$request_uri;
+}
+
+# ---------- 443 端口：TLS 终结 + 反代 ----------
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name <你的域名>;
+
+    # ---- 证书（certbot 自动管理时保持其生成的路径即可）----
+    ssl_certificate     /etc/nginx/certs/techhaven.crt;
+    ssl_certificate_key /etc/nginx/certs/techhaven.key;
+    ssl_session_timeout 1d;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    # 基本安全响应头
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    # 强制 HTTPS（确认站点稳定后再启用）
+    # add_header Strict-Transport-Security "max-age=31536000" always;
+
+    root /srv/techhaven-frontend/current;
+    index index.html;
+
+    # 简单限流：每 IP 每秒 10 个请求，容忍突发 20；防脚本化刷接口
+    limit_req zone=techhaven_api burst=20 nodelay;
+    limit_req_status 429;
+
+    # 带指纹的构建产物可长缓存；index.html 必须禁用缓存，否则发版后浏览器仍用旧的入口
+    location ~* ^/assets/.*\.(js|css|woff2?|ttf|svg|png|jpe?g|gif|webp|ico)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # ---------- 1) 前端静态站点（SPA 回退）----------
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ---------- 2) Agent Gateway 反向代理 ----------
+    # /gateway/xxx -> http://127.0.0.1:3091/xxx（末尾斜杠用于剥掉 /gateway 前缀）
+    location /gateway/ {
+        limit_req zone=techhaven_api burst=20 nodelay;
+
+        proxy_pass http://127.0.0.1:3091/;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 服务端注入 Gateway 令牌：浏览器永远拿不到这个值
+        # 必须与 /srv/techhaven-agent/shared/gateway.env 中的 TECHHAVEN_GATEWAY_TOKEN 一致
+        proxy_set_header Authorization "Bearer <TECHHAVEN_GATEWAY_TOKEN>";
+
+        # 服务端注入调用者身份：由 BFF 校验会话后返回 actor。
+        # 绝不能转发浏览器自报的 X-TechHaven-Actor——先剥掉，再由 auth_request 注入。
+        proxy_set_header X-TechHaven-Actor "";
+        auth_request /_techhaven_actor;
+        auth_request_set $techhaven_actor $upstream_http_x_techhaven_actor;
+        proxy_set_header X-TechHaven-Actor $techhaven_actor;
+
+        # SSE（事件流）必须关闭缓冲，否则事件会被攒在缓冲区里不下发
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header Accept-Encoding "";
+        chunked_transfer_encoding on;
+    }
+
+    # auth_request 子请求 → BFF 身份桥（127.0.0.1:3092）。
+    # BFF 校验 S_TOKEN Cookie / Bearer token（调产品后端 /api/v1/user/info），
+    # 成功返回 200 + X-TechHaven-Actor 头；未登录返回 401 由 Nginx 直接拒绝。
+    # auth_request 子请求自动携带原始请求头（含 Cookie 与 Authorization）。
+    location = /_techhaven_actor {
+        internal;
+        proxy_pass http://127.0.0.1:3092/internal/v1/session/actor;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+    }
+
+    # 仅本机排障用；公网部署建议整段删除
+    location = /gateway/healthz {
+        proxy_pass http://127.0.0.1:3091/healthz;
+        access_log off;
+    }
+
+    access_log /var/log/nginx/techhaven.access.log;
+    error_log  /var/log/nginx/techhaven.error.log;
+}
+
+# ---------- 限流区定义（需放在 http 块；若你的站点是 include 进 http 的单独 conf，
+#            把这行挪到 /etc/nginx/conf.d/ 下任意 http 级文件）----------
+# limit_req_zone $binary_remote_addr zone=techhaven_api:10m rate=10r/s;

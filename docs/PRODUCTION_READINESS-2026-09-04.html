@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TechHaven 上线就绪度评估 · 2026-09-04</title>
+<style>
+  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#1f2328;max-width:900px;margin:0 auto;padding:32px 24px;line-height:1.7;background:#fff}
+  h1{font-size:24px;font-weight:600;border-bottom:2px solid #d0d7de;padding-bottom:10px}
+  h2{font-size:18px;font-weight:600;margin-top:36px;border-left:4px solid #185FA5;padding-left:10px}
+  h3{font-size:15px;font-weight:600;margin-top:24px}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid #d0d7de;padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f6f8fa}
+  .tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600}
+  .p0{background:#FCEBEB;color:#791F1F}
+  .p1{background:#FAEEDA;color:#633806}
+  .p2{background:#EAF3DE;color:#27500A}
+  .good{background:#EAF3DE;color:#27500A;padding:2px 8px;border-radius:6px;font-size:12.5px}
+  .bad{background:#FCEBEB;color:#791F1F;padding:2px 8px;border-radius:6px;font-size:12.5px}
+  .mid{background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:6px;font-size:12.5px}
+  .meta{color:#57606a;font-size:13px}
+  code{background:#f6f8fa;padding:1px 5px;border-radius:4px;font-size:13px}
+  .verdict{background:#FCEBEB;border:1px solid #A32D2D;border-radius:10px;padding:16px 20px;margin:20px 0}
+  .box{background:#f6f8fa;border:1px solid #d0d7de;border-radius:10px;padding:14px 18px;margin:12px 0}
+  ul{padding-left:22px}
+  li{margin:5px 0}
+</style>
+</head>
+<body>
+
+<h1>TechHaven 上线就绪度评估</h1>
+<p class="meta">评估日期：2026-09-04 · 评估范围：前端 SPA、Agent Gateway、Agent DB、techhaven-mcp、部署脚本、CI/CD · 依据：代码与文档实证（非计划书）</p>
+
+<div class="verdict">
+<strong>总体结论：当前不具备多用户正式上线条件，但底座质量显著高于同类自研项目。</strong><br>
+按项目自己的成熟度定义（ROADMAP §1），各核心能力普遍处于 <code>verified-mock</code>，距 <code>production</code> 门禁还差身份链路、真实引擎验证、观测性三块硬骨头。<strong>建议以「单组织受限试点」为第一个上线目标</strong>，而非直接开放。
+</div>
+
+<h2>一、分维度评估</h2>
+
+<h3>1. 部署工程 —— B（试点可上）</h3>
+<table>
+<tr><th>项</th><th>现状</th><th>评价</th></tr>
+<tr><td>发布脚本</td><td><code>npm run deploy:server</code> 一条命令：构建→打包→SCP→远端解压→原子切软链接→健康检查→<b>失败自动回滚</b>→保留 5 版</td><td><span class="good">优秀</span> 脚本有路径注入防护、tar 条目安全校验</td></tr>
+<tr><td>CI/CD</td><td>4 个 workflow：前端 build+test+体积预算、mcp/bridge/gateway 各自 typecheck+test+smoke</td><td><span class="good">良好</span></td></tr>
+<tr><td>进程管理</td><td>Gateway 有 systemd 安装脚本 + 无 root 兜底脚本（带 /proc cmdline 校验防误杀）</td><td><span class="good">良好</span></td></tr>
+<tr><td>Nginx</td><td>有示例配置（SPA 回退/SSE/鉴权注入），但<b>只是示例</b>，未经真实域名验证</td><td><span class="mid">待演练</span></td></tr>
+<tr><td>数据库部署</td><td>迁移脚本成熟（按序幂等执行），但<b>生产 PG 实例不存在、无备份策略、无定时清理任务</b></td><td><span class="bad">硬缺口</span></td></tr>
+<tr><td>监控告警</td><td><b>无</b>。仅 JSONL + stderr，无 metrics/错误上报/告警通道</td><td><span class="bad">硬缺口</span></td></tr>
+</table>
+
+<h3>2. 安全 —— C+（有硬缺口）</h3>
+<table>
+<tr><th>项</th><th>现状</th><th>评价</th></tr>
+<tr><td><b>用户身份链路</b></td><td>Gateway 要求 BFF 注入 <code>X-TechHaven-Actor</code>；Nginx 示例用 auth_request 指向 BFF——但 <b>BFF 服务不存在</b>。生产链路中 actor 注入只存在于 vite 开发代理（写死 <code>user:1</code>）</td><td><span class="bad">P0 阻塞</span> 多用户下要么全员 401，要么全员共享一个身份</td></tr>
+<tr><td>密钥存储</td><td>AI Key AES-256-GCM 密文入库（含版本头/指纹/脱敏串），主密钥环境变量注入、支持轮换；明文只在解析瞬间存在于内存；有测试断言"明文不出现在任何 HTTP 响应"</td><td><span class="good">优秀</span> 但主密钥无 KMS，备份流程未成文</td></tr>
+<tr><td>多租户隔离</td><td>API 层 org 隔离有测试覆盖；但 dsh 子进程与 Gateway <b>同机同用户运行，无容器/沙箱</b>，网络出站不受限</td><td><span class="bad">P0（多组织前）</span></td></tr>
+<tr><td>前端安全</td><td>Mermaid strict 模式、9 项凭据脱敏回归（反向验证过）、密钥输入有形态校验</td><td><span class="good">良好</span></td></tr>
+<tr><td>传输安全</td><td>Nginx 示例是 80 端口明文；AI Key 校验强制 HTTPS 上游但前端到网关链路需 TLS</td><td><span class="mid">试点前必须配 TLS</span></td></tr>
+<tr><td>限流</td><td>Gateway 有组织级会话配额（冒烟验证）；Nginx 层无 IP 限流、无 AI 配额的请求级限制</td><td><span class="mid">待补</span></td></tr>
+</table>
+
+<h3>3. 产品功能 —— B-（博客域可上线，Agent 域是半成品）</h3>
+<ul>
+<li><b>博客/组织/研发/后台域</b>：页面、service、真实后端（techhaven.website）都在运行，属于已上线部分。</li>
+<li><b>Agent 会话/审批/SSE</b>：mock 驱动下 41 项冒烟全绿，前端面板实测通过——但<b>全部跑在 mock 上</b>。</li>
+<li><b>dsh 真实引擎</b>：<code>implemented</code> 但 SDK 是 0.1.1-rc.2 预发布版，<b>无一次 live 验证</b>（无权限应答、无单 turn cancel 验证）。这是产品核心卖点，恰恰是最没验证的部分。</li>
+<li><b>AI 配置资产（本次新增）</b>：后端与 Gateway 全链路就绪（100/100 测试），但<b>前端 UI 未接入</b>，用户仍走旧的单套配置接口。</li>
+<li><b>组织配置管理</b>：数据模型有、HTTP 不开放（有意的安全取舍）、管理界面不存在——组织管理员目前只能直插数据库。</li>
+</ul>
+
+<h3>4. 数据层 —— B-</h3>
+<ul>
+<li>Schema 设计成熟：枚举约束、部分唯一索引（默认配置互斥）、微元计价、审计明细与聚合分离、保留策略成文。</li>
+<li>迁移机制按序幂等，可重复执行。</li>
+<li>缺口：无生产 PG 实例证据（live smoke 存在但未跑过真实环境）；<code>agent_events</code> 量大需按月分区（已标注未实施）；user→org 归属在产品后端，Agent DB 只有 ID 引用，<b>两库之间无一致性保障</b>；备份/恢复从未演练。</li>
+</ul>
+
+<h3>5. 工程质量 —— A-（本项目最强项）</h3>
+<ul>
+<li>测试密度：Gateway 100+、MCP 32、Bridge 14+4、前端 22 项，另有真实 HTTP/SSE 重连回归；关键安全行为（脱敏、越权、明文不外泄）都有断言。</li>
+<li>文档文化突出：RFC、ROADMAP（严格状态定义，明文禁止把 implemented 写成"完成上线"）、每个服务有 README 与 env 模板。</li>
+<li>体积预算制：主入口 gzip 93.3KB（预算 256KB），CI 卡口。</li>
+<li>扣分项：无 ESLint（仅 Prettier）、<b>42 个未提交变更</b>（含全部部署脚本与 AI 资产）——变更管理与 CI 门禁脱节；TypeScript 严格度未系统审计。</li>
+</ul>
+
+<h3>6. 可靠性 —— C+</h3>
+<ul>
+<li>发布回滚机制好（20 秒健康检查失败自动回退+日志输出），但<b>从未在真实服务器演练</b>。</li>
+<li>单实例架构：JSONL spool、内存会话注册表，重启靠事件回放——设计自洽，但决定了<b>不能水平扩展</b>，重启窗口内会话不可用。</li>
+<li>SSE 断线重连、背压断开慢客户端、幂等提案都有覆盖。</li>
+<li>无 SLO、无容量模型、无故障演练记录。</li>
+</ul>
+
+<h2>二、上线阻塞清单</h2>
+
+<h3><span class="tag p0">P0</span> 不解决无法多用户上线</h3>
+<table>
+<tr><th>#</th><th>事项</th><th>说明</th><th>预估量级</th></tr>
+<tr><td>1</td><td>实现 BFF（身份桥）</td><td>校验产品后端会话 → 注入 <code>X-TechHaven-Actor</code> 与 Gateway Token；Nginx auth_request 已预留挂点，只差这个服务。约 200 行 Node 服务</td><td>3–5 天</td></tr>
+<tr><td>2</td><td>dsh 真实引擎联调</td><td>SDK 还是 rc 版；至少完成：live 会话、权限应答、取消、密钥注入端到端验证</td><td>1–2 周（受上游 SDK 成熟度制约）</td></tr>
+<tr><td>3</td><td>生产 PG 落地</td><td>建实例、跑迁移、验证 smoke:pg、配置每日备份+恢复演练一次、审计清理定时任务</td><td>2–3 天</td></tr>
+<tr><td>4</td><td>最小可观测</td><td>健康检查已有；至少补：进程存活告警、错误日志聚合（如 Loki/Sentry 免费档）、磁盘/内存告警</td><td>2–3 天</td></tr>
+<tr><td>5</td><td>TLS 终结</td><td>Nginx 443 + 证书（AI Key 域名已在传输中，明文不可接受）</td><td>半天</td></tr>
+<tr><td>6</td><td>提交全部变更</td><td>42 个未提交文件（部署脚本、AI 资产全部未入库），当前生产构建不含这些能力</td><td>半天</td></tr>
+</table>
+
+<h3><span class="tag p1">P1</span> 试点开放前应完成</h3>
+<ul>
+<li>前端接入多套 AI 配置 UI（后端已就绪）；组织配置管理最小工具（哪怕是 CLI）。</li>
+<li>主密钥备份/轮换 runbook 成文并演练一次。</li>
+<li>Nginx IP 限流 + <code>index.html</code> 禁缓存验证。</li>
+<li>回滚演练：在测试服务器完整走一次"发布→健康检查失败→自动回滚"。</li>
+<li>产品后端与 Agent DB 的组织归属一致性核对脚本。</li>
+</ul>
+
+<h3><span class="tag p2">P2</span> 正式多组织开放前（ROADMAP R4）</h3>
+<ul>
+<li>dsh 子进程容器化/沙箱化 + 网络出站 allowlist；</li>
+<li>SLO 与告警体系、容量与成本看板；</li>
+<li>ASVS 检查、威胁建模、SBOM、密钥全面轮换；</li>
+<li>负载/长稳/恢复演练、组织级 kill switch；</li>
+<li>多实例化（去 JSONL 单实例假设）。</li>
+</ul>
+
+<h2>三、做得好的（应保持）</h2>
+<div class="box">
+<ul>
+<li><b>诚实的状态管理</b>：ROADMAP 明文禁止把 implemented 写成"完成上线"，本次评估与它的自评高度一致——这种自知之明在自研项目里罕见。</li>
+<li><b>安全默认值</b>：Gateway 默认只监听回环、工具默认关闭逐项 opt-in、写操作默认走审批、密钥默认加密+脱敏+审计。</li>
+<li><b>失败关闭（fail-closed）</b>：配置缺失拒绝启动而非带病运行；提案未决自动过期=默认拒绝。</li>
+<li><b>发布工程</b>：原子软链接切换+健康检查+自动回滚，好于很多手写 rsync 的团队。</li>
+</ul>
+</div>
+
+<h2>四、建议路径</h2>
+<div class="box">
+<strong>第 1 步（本周）</strong>：提交全部变更 → 生产 PG + TLS + 最小告警 → 测试服务器完整演练发布/回滚。<br>
+<strong>第 2 步（1–2 周）</strong>：实现 BFF 补齐身份链路；dsh SDK 稳定后在测试环境跑通第一条真实 Agent 会话。<br>
+<strong>第 3 步（第 3–4 周）</strong>：前端接入多套配置；单组织 3–5 人灰度试点（ROADMAP R3），配额从紧、观测盯紧。<br>
+<strong>不做的事</strong>：跳过试点直接开放多组织；在 dsh 未验证前宣传 Agent 能力。
+</div>
+
+<p class="meta">评分刻度：A 可直接上线 / B 试点可上 / C 存在硬缺口 / D 不可用。本报告基于静态代码审查、CI 配置、测试套件与既有文档，未包含渗透测试与负载测试。</p>
+
+</body>
+</html>

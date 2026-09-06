@@ -1,0 +1,88 @@
+# ============================================================================
+# techhaven-mcp → dsh 挂载配置示例（Cordis patch overlay，YAML）
+#
+# 依据（dsh v0.1.2-alpha.1，commit cd5ef8148158c3a752a658978873241fdf8e2bbc，tag dsh-v0.1.2-alpha.1）：
+#   - docs/config-catalog.md §`@deepseek-ai/dsh-mcp-client`（1441-1510 行）——全部字段与类型
+#   - packages/mcp/mcp-client/README.md §Minimal configuration（34-66 行）——字段表与默认值
+#   - docs/user/guide/mcp-memory.md §Bring another MCP server（88-99 行）——patch 行格式
+#   - packages/mcp/mcp-client/src/index.ts:107-131——schema 默认值（与上两处一致）
+#
+# 用法（三选一，均为 dsh 文档记载的用法）：
+#   1) 临时加载：  dsh web --patch "<本文件绝对路径>"
+#      （docs/user/guide/mcp-memory.md:28）
+#   2) 单 profile：把下面整个 `- insert:` 块并入 $DSH_HOME/profiles/<name>/cordis.patch.yml
+#   3) 全机生效：  并入 $DSH_HOME/cordis.patch.yml
+#      （docs/user/guide/mcp-memory.md:33；层叠顺序：bundle patch → profile patch
+#       → $DSH_HOME/cordis.patch.yml → --patch，见 apps/cli/README.md:36-41）
+# 注意：并入已有文件时只合并本 `- insert:` 块，不要整文件覆盖——
+#       目标文件可能已含其他 patch 行（mcp-memory.md:33）。
+# ============================================================================
+
+- insert:
+    # 插件实例 id：patch 内唯一（mcp-memory.md:86「unique `id` and `serverName`」）
+    - id: techhaven-mcp
+      # 插件包名（config-catalog.md:1441）
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        # 传输判别字段：stdio | streamable-http（config-catalog.md:1451-1452、1477-1478）
+        transport: stdio
+        # 工具命名空间：须匹配 [A-Za-z0-9_-]{1,32}，且在存活的 mcp-client 实例间唯一；
+        # 模型侧工具名为 mcp__techhaven__<原始工具名>（config-catalog.md:1453-1457）
+        serverName: techhaven
+        # 启动 MCP server 的可执行文件（config-catalog.md:1459-1460）
+        command: node
+        # 参数原样传给子进程，不做 shell 插值（config-catalog.md:1461-1462）
+        args:
+          - 'D:/Desktop/Chen/TechHaven/services/techhaven-mcp/dist/index.js'   # ← 改成你的 dist/index.js 绝对路径
+        # 额外 env，合并在「净化后的父环境」之上（config-catalog.md:1463-1464）。
+        # 关键：名字命中 /KEY|PASSWORD|SECRET|TOKEN/i 的环境变量以及全部 DSH_*
+        # 会在 dsh 拉起子进程前被剥掉（packages/subprocess/subprocess/src/index.ts:44
+        # SENSITIVE_ENV_PATTERN；packages/mcp/mcp-client/README.md §Environment
+        # scrubbing (stdio)；docs/user/guide/mcp-memory.md:13）。
+        # 因此 TECHHAVEN_AGENT_TOKEN / TECHHAVEN_TOKEN_SECRET 必须在这里显式声明，
+        # 仅「先 export 再启动 dsh」不会让它们进入子进程。
+        env:
+          # 演示 token：`npm run token -- issue ...` 签发后 export。
+          # `!!js process.env.X` 写法来自 dsh 官方示例（mcp-client README:43
+          # `GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN`）；启动 dsh 前须已 export。
+          TECHHAVEN_AGENT_TOKEN: !!js process.env.TECHHAVEN_AGENT_TOKEN
+          # 必须与签发该 token 时使用的 TECHHAVEN_TOKEN_SECRET 完全一致
+          TECHHAVEN_TOKEN_SECRET: !!js process.env.TECHHAVEN_TOKEN_SECRET
+          # 离线演示模式（mock 为 techhaven-mcp 默认值；见其 src/config.ts:33-36）
+          TECHHAVEN_BACKEND: mock
+          # 审计 JSONL（append-only，目录会自动创建）。相对路径按子进程 cwd 解析，
+          # 建议写绝对路径（默认值 ./audit/agent-audit.jsonl，见 techhaven-mcp src/config.ts:51）
+          TECHHAVEN_AUDIT_FILE: 'D:/Desktop/Chen/TechHaven/services/techhaven-mcp/audit/agent-audit.jsonl'
+        # 子进程工作目录，默认空串（index.ts:120）；留空时继承 dsh 的工作目录。
+        # 需要固定为项目目录可写：cwd: !!js process.cwd()（mcp-memory.md:98 原文用法）
+        # cwd: ''
+        # 单次 tools/call 超时（毫秒），默认 60000（README 字段表:61；index.ts:121）
+        # toolCallTimeoutMs: 60000
+        # 首次连接/工具同步失败时是否中止 harness 启动，默认 false
+        # （config-catalog.md:1469-1470；README:62、70——false 时 harness 仍启动，
+        #  该 server 的工具不出现且记录错误日志）
+        # failOnStartupError: true
+        # 断线自动重连策略；整块可省略，省略即用下列默认值
+        # （config-catalog.md:1497-1507；index.ts:107-110）
+        # reconnect:
+        #   enabled: true          # 默认 true（README:63）
+        #   initialDelayMs: 500    # 默认 500，逐次翻倍（README:64）
+        #   maxDelayMs: 30000      # 默认 30000，也是重置尝试预算的存活阈值（README:65）
+        #   maxAttempts: 10        # 默认 10，耗尽后该 server 工具被摘除（README:66）
+
+# ----------------------------------------------------------------------------
+# Streamable HTTP 传输的键名记录（techhaven-mcp P0 仅支持 stdio，以下勿启用）
+# dsh 侧字段：transport: 'streamable-http' + url + headers
+# （config-catalog.md:1475-1495；docs/user/guide/mcp-memory.md:101）
+# ----------------------------------------------------------------------------
+# - insert:
+#     - id: techhaven-http
+#       name: '@deepseek-ai/dsh-mcp-client'
+#       config:
+#         transport: streamable-http
+#         serverName: techhaven
+#         url: http://127.0.0.1:8787/mcp          # MCP endpoint URL（config-catalog.md:1485-1486）
+#         headers:                                 # 附加到 MCP 请求的头（config-catalog.md:1487-1488）
+#           Authorization: !!js '`Bearer ${process.env.TECHHAVEN_AGENT_TOKEN}`'
+#         toolCallTimeoutMs: 60000
+#         failOnStartupError: false

@@ -1,0 +1,14 @@
+{
+  "name": "techhaven-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TechHaven Agent 控制面共享契约（类型单源）：引擎事件/事件信封/会话/提案/API 形态",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts"
+    }
+  },
+  "files": ["index.d.ts"]
+}

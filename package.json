@@ -1,0 +1,20 @@
+{
+  "name": "techhaven-agent-services",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "install:services": "node scripts/services.mjs install",
+    "build": "node scripts/services.mjs build",
+    "test": "node scripts/services.mjs test",
+    "check": "node scripts/services.mjs check",
+    "check:ports": "node scripts/check-stack-ports.mjs",
+    "dev:gateway": "npm --prefix services/techhaven-gateway run dev",
+    "dev:stack": "node scripts/start-agent-stack.mjs",
+    "package:release": "node scripts/package-release.mjs"
+  }
+}

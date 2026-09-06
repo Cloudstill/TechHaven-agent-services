@@ -1,0 +1,22 @@
+{
+  "name": "techhaven-bff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TechHaven BFF 身份桥：校验产品后端会话，为 Nginx auth_request 注入可信 X-TechHaven-Actor",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
